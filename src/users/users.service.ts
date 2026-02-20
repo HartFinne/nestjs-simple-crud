@@ -2,7 +2,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { UsersRepository } from './users.repository';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PaginateUsersDto } from './dto/paginate-users.dto';
+import { PaginatedResponse, PaginateUsersDto } from './dto/paginate-users.dto';
 import { UserEntity } from './entities/user.entity';
 
 /**
@@ -24,7 +24,7 @@ export class UsersService {
     return this.usersRepository.create(dto);
   }
 
-  async findAll(query: PaginateUsersDto): Promise<UserEntity[]> {
+  async findAll(query: PaginateUsersDto): Promise<PaginatedResponse<UserEntity>> {
     return this.usersRepository.findAll(query);
   }
 

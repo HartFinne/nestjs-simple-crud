@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { UserRole } from '../entities/user.entity';
 
@@ -17,4 +17,14 @@ export class PaginateUsersDto {
   @IsEnum(UserRole)
   @IsOptional()
   role?: UserRole;
+}
+
+// ─── Response ─────────────────────────────────────────────────────────────────
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: {
+    limit: number;
+    hasNextPage: boolean;
+    nextCursor: string | null;
+  };
 }

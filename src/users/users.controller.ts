@@ -15,7 +15,7 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PaginateUsersDto } from './dto/paginate-users.dto';
+import { PaginatedResponse, PaginateUsersDto } from './dto/paginate-users.dto';
 import { UserEntity } from './entities/user.entity';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -43,7 +43,7 @@ export class UsersController {
 
   // GET /api/v1/users
   @Get()
-  findAll(@Query() query: PaginateUsersDto): Promise<UserEntity[]> {
+  findAll(@Query() query: PaginateUsersDto): Promise<PaginatedResponse<UserEntity>> {
     return this.usersService.findAll(query);
   }
 

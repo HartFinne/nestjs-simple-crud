@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -8,33 +9,27 @@ import { FirebaseService } from '../firebase/firebase.service';
 import { UserEntity, UserRole } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { PaginateUsersDto } from './dto/paginate-users.dto';
+import { PaginatedResponse, PaginateUsersDto } from './dto/paginate-users.dto';
 import * as admin from 'firebase-admin';
+import { BaseRepository } from 'src/common/repositories/base.repository';
 
 const COLLECTION = 'users';
 
-/**
- * UsersRepository
- * ---------------
- * Single Responsibility: all Firestore I/O for the users collection.
- * The service layer never touches Firestore directly.
- */
 @Injectable()
-export class UsersRepository {
-  private readonly logger = new Logger(UsersRepository.name);
+export class UsersRepository extends BaseRepository {
+  protected readonly logger = new Logger(UsersRepository.name);
 
-  constructor(private readonly firebase: FirebaseService) {}
+  constructor(private readonly firebase: FirebaseService) {
+    super();
+  }
 
   private get col(): admin.firestore.CollectionReference {
     return this.firebase.collection(COLLECTION);
   }
 
-  // ─── Mappers ──────────────────────────────────────────────────────────────
+  // ─── Mapper ───────────────────────────────────────────────────────────────
 
-  private toEntity(
-    id: string,
-    data: admin.firestore.DocumentData,
-  ): UserEntity {
+  private toEntity(id: string, data: admin.firestore.DocumentData): UserEntity {
     return new UserEntity({
       id,
       name: data['name'],
@@ -49,31 +44,28 @@ export class UsersRepository {
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
   async create(dto: CreateUserDto): Promise<UserEntity> {
-    try {
+    return this.run('Failed to create user', async () => {
       const now = admin.firestore.FieldValue.serverTimestamp();
-      const docRef = this.col.doc(); // auto-generate ID
+      const docRef = this.col.doc();
 
-      const payload = {
+      await docRef.set({
         name: dto.name,
         email: dto.email,
         role: dto.role ?? UserRole.USER,
         isActive: true,
         createdAt: now,
         updatedAt: now,
-      };
-
-      await docRef.set(payload);
+      });
 
       const snap = await docRef.get();
       return this.toEntity(snap.id, snap.data()!);
-    } catch (err) {
-      this.logger.error('Failed to create user', err);
-      throw new InternalServerErrorException('Failed to create user');
-    }
+    });
   }
 
-  async findAll(query: PaginateUsersDto): Promise<UserEntity[]> {
-    try {
+  async findAll(query: PaginateUsersDto): Promise<PaginatedResponse<UserEntity>> {
+    return this.run('Failed to fetch users', async () => {
+      const limit = query.limit ?? 10;
+
       let ref: admin.firestore.Query = this.col.orderBy('createdAt', 'desc');
 
       if (query.role) {
@@ -82,54 +74,49 @@ export class UsersRepository {
 
       if (query.cursor) {
         const cursorDoc = await this.col.doc(query.cursor).get();
-        if (cursorDoc.exists) {
-          ref = ref.startAfter(cursorDoc);
+        if (!cursorDoc.exists) {
+          throw new BadRequestException(
+            `Invalid cursor — document "${query.cursor}" does not exist`,
+          );
         }
+        ref = ref.startAfter(cursorDoc);
       }
 
-      ref = ref.limit(query.limit ?? 10);
+      const snapshot = await ref.limit(limit + 1).get();
+      const docs = snapshot.docs;
 
-      const snapshot = await ref.get();
-      return snapshot.docs.map((doc) => this.toEntity(doc.id, doc.data()));
-    } catch (err) {
-      this.logger.error('Failed to fetch users', err);
-      throw new InternalServerErrorException('Failed to fetch users');
-    }
+      const hasNextPage = docs.length > limit;
+      const pageDocs = hasNextPage ? docs.slice(0, limit) : docs;
+      const nextCursor = hasNextPage ? pageDocs[pageDocs.length - 1].id : null;
+
+      return {
+        data: pageDocs.map((doc) => this.toEntity(doc.id, doc.data())),
+        meta: { limit, hasNextPage, nextCursor },
+      };
+    });
   }
 
   async findById(id: string): Promise<UserEntity> {
-    try {
+    return this.run(`Failed to fetch user ${id}`, async () => {
       const snap = await this.col.doc(id).get();
-      if (!snap.exists) {
-        throw new NotFoundException(`User with id "${id}" not found`);
-      }
+      if (!snap.exists) throw new NotFoundException(`User with id "${id}" not found`);
       return this.toEntity(snap.id, snap.data()!);
-    } catch (err) {
-      if (err instanceof NotFoundException) throw err;
-      this.logger.error(`Failed to fetch user ${id}`, err);
-      throw new InternalServerErrorException('Failed to fetch user');
-    }
+    });
   }
 
   async findByEmail(email: string): Promise<UserEntity | null> {
-    try {
+    return this.run(`Failed to fetch user by email ${email}`, async () => {
       const snap = await this.col.where('email', '==', email).limit(1).get();
       if (snap.empty) return null;
-      const doc = snap.docs[0];
-      return this.toEntity(doc.id, doc.data());
-    } catch (err) {
-      this.logger.error(`Failed to fetch user by email ${email}`, err);
-      throw new InternalServerErrorException('Failed to query user by email');
-    }
+      return this.toEntity(snap.docs[0].id, snap.docs[0].data());
+    });
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<UserEntity> {
-    try {
+    return this.run(`Failed to update user ${id}`, async () => {
       const docRef = this.col.doc(id);
       const snap = await docRef.get();
-      if (!snap.exists) {
-        throw new NotFoundException(`User with id "${id}" not found`);
-      }
+      if (!snap.exists) throw new NotFoundException(`User with id "${id}" not found`);
 
       await docRef.update({
         ...dto,
@@ -138,25 +125,15 @@ export class UsersRepository {
 
       const updated = await docRef.get();
       return this.toEntity(updated.id, updated.data()!);
-    } catch (err) {
-      if (err instanceof NotFoundException) throw err;
-      this.logger.error(`Failed to update user ${id}`, err);
-      throw new InternalServerErrorException('Failed to update user');
-    }
+    });
   }
 
   async remove(id: string): Promise<void> {
-    try {
+    return this.run(`Failed to delete user ${id}`, async () => {
       const docRef = this.col.doc(id);
       const snap = await docRef.get();
-      if (!snap.exists) {
-        throw new NotFoundException(`User with id "${id}" not found`);
-      }
+      if (!snap.exists) throw new NotFoundException(`User with id "${id}" not found`);
       await docRef.delete();
-    } catch (err) {
-      if (err instanceof NotFoundException) throw err;
-      this.logger.error(`Failed to delete user ${id}`, err);
-      throw new InternalServerErrorException('Failed to delete user');
-    }
+    });
   }
 }
